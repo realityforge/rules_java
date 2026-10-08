@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build_and_test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2025]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: bazel-contrib/setup-bazel@0.14.0
+      - name: Verify Bazel version
+        run: test "$(bazel --version)" = "bazel 9.3.0"
+      - name: Build
+        run: >-
+          bazel build --
+          //...
+          -//test/java/...
+          @remote_java_tools//:ijar_cc_binary
+          @remote_java_tools//:one_version_cc_bin
+          @remote_java_tools//:proguard
+          @remote_java_tools//:singlejar_cc_bin
+      - name: Test
+        run: bazel test --test_output=errors //test/...
+      - name: Prepare integration tests
+        if: runner.os != 'Windows'
+        working-directory: test/repo
+        run: bash -e setup.sh
+      - name: Prepare integration tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: test/repo
+        shell: cmd
+        run: |
+          if not exist C:\b mkdir C:\b
+          call setup.bat
+      - name: Verify integration Bazel version
+        working-directory: test/repo
+        run: test "$(bazel --version)" = "bazel 9.3.0"
+      - name: Build integration tests
+        working-directory: test/repo
+        run: bazel build //... //:bin_deploy.jar
+      - name: Run integration tests
+        working-directory: test/repo
+        run: bazel test --test_output=errors //:MyTest
